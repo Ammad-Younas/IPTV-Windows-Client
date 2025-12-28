@@ -349,8 +349,10 @@ class MainWindow(QMainWindow):
     def toggle_fullscreen(self):
         if self.isFullScreen():
             self.showNormal()
+            self.scroll_area.show()
         else:
             self.showFullScreen()
+            self.scroll_area.hide()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
