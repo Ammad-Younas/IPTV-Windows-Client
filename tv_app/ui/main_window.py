@@ -11,6 +11,7 @@ import os
 from playlist import M3UParser, Channel
 from player import VideoPlayer
 from . import styles
+from yt_handler import YouTubeHandler
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -65,6 +66,40 @@ class MainWindow(QMainWindow):
                         self.logo_map[item['channel'].lower()] = item['url']
         except Exception as e:
             print(f"Error loading logos: {e}")
+
+    def load_from_url_input(self):
+        url_text = self.url_input.text().strip()
+        if not url_text:
+            return
+
+        # Check for YouTube
+        if YouTubeHandler.is_youtube_url(url_text):
+            # Check if playlist
+            if "list=" in url_text:
+                self.search_input.setText("Loading YouTube Playlist...")
+                QApplication.processEvents()
+                self.channels = YouTubeHandler.parse_playlist(url_text)
+                self.refresh_ui_with_channels()
+                self.search_input.clear()
+            else:
+                self.channels = [Channel(name="YouTube Video", url=url_text, group="YouTube")]
+                self.refresh_ui_with_channels()
+                self.play_channel(self.channels[0])
+            return
+
+        if url_text.endswith(".m3u") or url_text.endswith(".m3u8"):
+            # Load from URL
+            parser = M3UParser()
+            try:
+                # We need to fetch it first.
+                response = requests.get(url_text)
+                if response.status_code == 200:
+                    self.channels = parser.parse(response.text)
+                    self.refresh_ui_with_channels()
+            except Exception as e:
+                print(f"Error loading URL: {e}")
+        else:
+             pass
 
     def setup_ui(self):
         # Main Widget
@@ -269,10 +304,7 @@ class MainWindow(QMainWindow):
         # Initial load
         self.load_from_url(self.current_playlist_url)
 
-    def load_from_url_input(self):
-        url = self.url_input.text()
-        if url:
-            self.load_from_url(url)
+
 
     def load_from_url(self, url):
         self.search_input.setPlaceholderText("Loading...")
@@ -432,9 +464,27 @@ class MainWindow(QMainWindow):
     def play_channel(self, channel):
         if channel:
             print(f"Playing: {channel.name} -> {channel.url}")
-            self.video_player.set_media(channel.url)
+            
+            # Resolve stream URL
+            stream_url = channel.url
+            if YouTubeHandler.is_youtube_url(stream_url):
+                self.play_btn.setDisabled(True) # Disable avoid spam
+                self.search_input.setPlaceholderText("Resolving YouTube URL...")
+                QApplication.processEvents()
+                resolved = YouTubeHandler.get_stream_url(stream_url)
+                self.play_btn.setDisabled(False)
+                self.search_input.setPlaceholderText("Search")
+                
+                if resolved:
+                    print(f"Resolved YouTube Stream: {resolved}")
+                    stream_url = resolved
+                else:
+                    print("Could not resolve YouTube URL")
+                    return
+
+            self.video_player.set_media(stream_url)
             self.video_player.play()
-            self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaStop))
+            self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPause))
 
     def change_volume(self, value):
         self.video_player.set_volume(value)
