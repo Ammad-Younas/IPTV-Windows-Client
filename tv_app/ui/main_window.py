@@ -198,6 +198,7 @@ class MainWindow(QMainWindow):
         self.play_btn.clicked.connect(self.toggle_play)
         btns_row.addWidget(self.play_btn)
 
+        
         self.stop_btn = QPushButton()
         self.stop_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaStop))
         self.stop_btn.setFixedSize(30, 30)
@@ -211,6 +212,14 @@ class MainWindow(QMainWindow):
         self.vol_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.vol_btn.clicked.connect(self.toggle_mute)
         btns_row.addWidget(self.vol_btn)
+
+        self.volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setValue(100)
+        self.volume_slider.setFixedWidth(100)
+        self.volume_slider.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.volume_slider.valueChanged.connect(self.change_volume)
+        btns_row.addWidget(self.volume_slider)
 
         btns_row.addStretch()
 
@@ -307,7 +316,7 @@ class MainWindow(QMainWindow):
             display_name = code
             if code.upper() in self.country_map:
                 c_data = self.country_map[code.upper()]
-                display_name = f"{c_data['flag']} {c_data['name']}"
+                display_name = f"{c_data['name']}"
             country_items.append((display_name, code))
             
         country_items.sort(key=lambda x: x[0])
@@ -424,6 +433,18 @@ class MainWindow(QMainWindow):
         if channel:
             print(f"Playing: {channel.name} -> {channel.url}")
             self.video_player.set_media(channel.url)
+            self.video_player.play()
+            self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaStop))
+
+    def change_volume(self, value):
+        self.video_player.set_volume(value)
+
+    def toggle_play(self):
+        if self.video_player.is_playing():
+            self.video_player.pause()
+            self.timer.stop()
+            self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPlay))
+        else:
             self.video_player.play()
             self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPause))
             self.timer.start()
