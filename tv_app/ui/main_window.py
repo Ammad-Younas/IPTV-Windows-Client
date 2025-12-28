@@ -1,0 +1,356 @@
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+    QListWidget, QListWidgetItem, QLineEdit, QLabel, QPushButton,
+    QSplitter, QFrame, QComboBox, QSlider, QStyle, QFileDialog, QScrollArea
+)
+from PyQt6.QtCore import Qt, QSize, QTimer
+from PyQt6.QtGui import QIcon, QAction, QPainter, QColor
+
+from playlist import M3UParser, Channel
+from player import VideoPlayer
+from . import styles
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("IPTV Pro Player")
+        self.resize(1200, 800)
+        
+        self.channels = []
+        self.current_playlist_url = "https://iptv-org.github.io/iptv/index.m3u"
+        
+        # Playback Timer
+        self.timer = QTimer(self)
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self.update_video_position)
+        
+        # Initialize UI
+        self.setup_ui()
+        self.apply_styles()
+        
+        # Load Default
+        self.load_channels()
+
+    def setup_ui(self):
+        # Main Widget
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # === TOP BAR ===
+        top_bar = QFrame()
+        top_bar.setObjectName("topBar")
+        top_bar.setFixedHeight(60) # Slightly compact
+        top_layout = QHBoxLayout(top_bar)
+        top_layout.setContentsMargins(20, 5, 20, 5)
+        top_layout.setSpacing(15)
+
+        # Search Bar
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search Channels")
+        self.search_input.setFixedWidth(300)
+        self.search_input.textChanged.connect(self.filter_channels)
+        top_layout.addWidget(self.search_input)
+
+        # URL Input
+        self.url_input = QLineEdit()
+        self.url_input.setPlaceholderText("https://...")
+        self.url_input.setFixedWidth(400)
+        self.url_input.setText(self.current_playlist_url)
+        top_layout.addWidget(self.url_input)
+
+        # Load Button
+        load_btn = QPushButton("Load URL")
+        load_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        load_btn.clicked.connect(self.load_from_url_input)
+        load_btn.setStyleSheet("background-color: #2a2a2a; padding: 6px 12px; font-weight: bold;")
+        top_layout.addWidget(load_btn)
+
+        # Category Filter
+        self.category_combo = QComboBox()
+        self.category_combo.addItem("All Categories")
+        self.category_combo.setFixedWidth(160)
+        self.category_combo.currentTextChanged.connect(self.filter_channels)
+        top_layout.addWidget(self.category_combo)
+
+        top_layout.addStretch()
+
+        # Folder Button
+        folder_btn = QPushButton(" Browse Folder")
+        folder_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        folder_btn.clicked.connect(self.browse_folder)
+        folder_btn.setStyleSheet("font-weight: bold; padding: 6px 12px;")
+        top_layout.addWidget(folder_btn)
+
+        main_layout.addWidget(top_bar)
+
+        # === CONTENT BODY (Splitter: Player Left | Sidebar Right) ===
+        content_widget = QWidget()
+        content_layout = QHBoxLayout(content_widget)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        
+        # --- LEFT: PLAYER AREA ---
+        player_frame = QFrame()
+        player_frame.setObjectName("playerContainer")
+        player_frame.setStyleSheet("background-color: black;")
+        player_layout = QVBoxLayout(player_frame)
+        player_layout.setContentsMargins(0, 0, 0, 0)
+        player_layout.setSpacing(0)
+
+        # Video Player
+        self.video_player = VideoPlayer()
+        player_layout.addWidget(self.video_player, 1) # Give player ALL expansion space
+
+        # Controls Container
+        controls_container = QFrame()
+        controls_container.setObjectName("controlsFrame")
+        controls_container.setStyleSheet("background-color: #0d0d0d;")
+        controls_container.setFixedHeight(55) # Force compact height
+        
+        controls_layout = QVBoxLayout(controls_container)
+        controls_layout.setContentsMargins(10, 0, 10, 0) # Zero vertical padding, small side padding
+        controls_layout.setSpacing(0)
+        
+        # Seek Bar
+        self.seek_slider = QSlider(Qt.Orientation.Horizontal)
+        self.seek_slider.setRange(0, 1000)
+        self.seek_slider.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.seek_slider.setFixedHeight(15) 
+        self.seek_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 2px; background: #333; }
+            QSlider::handle:horizontal { width: 10px; height: 10px; margin: -4px 0; border-radius: 5px; background: white; }
+        """)
+        self.seek_slider.sliderPressed.connect(self.seek_started)
+        self.seek_slider.sliderReleased.connect(self.seek_finished)
+        controls_layout.addWidget(self.seek_slider)
+
+        # Buttons Row
+        btns_row = QHBoxLayout()
+        btns_row.setContentsMargins(0, 0, 0, 2) # Minimal bottom padding
+        btns_row.setSpacing(15)
+        
+        self.play_btn = QPushButton()
+        self.play_btn.setObjectName("playButton")
+        self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPlay))
+        self.play_btn.setFixedSize(30, 30)
+        self.play_btn.setIconSize(QSize(16, 16))
+        self.play_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.play_btn.clicked.connect(self.toggle_play)
+        btns_row.addWidget(self.play_btn)
+
+        self.stop_btn = QPushButton()
+        self.stop_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaStop))
+        self.stop_btn.setFixedSize(30, 30)
+        self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stop_btn.clicked.connect(self.stop_playback)
+        btns_row.addWidget(self.stop_btn)
+
+        self.vol_btn = QPushButton()
+        self.vol_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaVolume))
+        self.vol_btn.setFixedSize(30, 30)
+        self.vol_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.vol_btn.clicked.connect(self.toggle_mute)
+        btns_row.addWidget(self.vol_btn)
+
+        btns_row.addStretch()
+
+        self.fs_btn = QPushButton()
+        self.fs_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_TitleBarMaxButton))
+        self.fs_btn.setFixedSize(30, 30)
+        self.fs_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.fs_btn.clicked.connect(self.toggle_fullscreen)
+        btns_row.addWidget(self.fs_btn)
+
+        controls_layout.addLayout(btns_row)
+        player_layout.addWidget(controls_container) # No stretch here, fixed height handles it
+        
+        content_layout.addWidget(player_frame, stretch=4)
+
+        # --- RIGHT: SIDEBAR (Channel Shelf moved here) ---
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setFixedWidth(320) # Fixed sidebar width
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setStyleSheet("border: none; background-color: #121212; border-left: 1px solid #222;")
+        
+        self.scroll_content = QWidget()
+        self.scroll_content.setStyleSheet("background-color: #121212;")
+        # Vertical Layout for Sidebar
+        self.card_layout = QVBoxLayout(self.scroll_content)
+        self.card_layout.setContentsMargins(10, 10, 10, 10)
+        self.card_layout.setSpacing(10)
+        self.card_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        
+        self.scroll_area.setWidget(self.scroll_content)
+        content_layout.addWidget(self.scroll_area, stretch=1) # Sidebar takes 20% width
+
+        main_layout.addWidget(content_widget)
+
+
+
+    def apply_styles(self):
+        self.setStyleSheet(styles.DARK_THEME)
+
+    def load_channels(self):
+        # Initial load
+        self.load_from_url(self.current_playlist_url)
+
+    def load_from_url_input(self):
+        url = self.url_input.text()
+        if url:
+            self.load_from_url(url)
+
+    def load_from_url(self, url):
+        self.search_input.setPlaceholderText("Loading...")
+        self.status_loading(True)
+        QApplication.processEvents()
+        
+        all_channels = M3UParser.parse_from_url(url)
+        self.channels = all_channels
+        self.refresh_ui_with_channels()
+        
+    def browse_folder(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Folder", "")
+        if dir_path:
+            self.status_loading(True)
+            QApplication.processEvents()
+            
+            all_channels = M3UParser.parse_from_directory(dir_path)
+            self.channels = all_channels
+            self.refresh_ui_with_channels()
+
+    def status_loading(self, loading):
+        # We can disable search or show spinner later
+        pass
+
+    def refresh_ui_with_channels(self):
+        # Extract Categories
+        categories = set(ch.group for ch in self.channels if ch.group)
+        self.category_combo.clear()
+        self.category_combo.addItem("All Categories")
+        self.category_combo.addItems(sorted(list(categories)))
+        
+        self.update_channel_list(self.channels)
+        self.search_input.setPlaceholderText("Search")
+
+    def seek_started(self):
+        self.timer.stop()
+
+    def seek_finished(self):
+        pos = self.seek_slider.value() / 1000.0
+        self.video_player.set_position(pos)
+        self.timer.start()
+
+    def update_video_position(self):
+        if self.video_player.is_playing():
+            pos = self.video_player.get_position()
+            self.seek_slider.setValue(int(pos * 1000))
+
+    def update_channel_list(self, channels):
+        # Clear existing items
+        while self.card_layout.count():
+            item = self.card_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        
+        limit = 500
+        for i, ch in enumerate(channels):
+            if i >= limit: break
+            
+            # Create Card Button
+            btn = QPushButton(f"  {ch.name}") # visual padding
+            btn.setObjectName("channelCard")
+            # Width fills layout, Height fixed
+            btn.setFixedHeight(50) 
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            
+            # Store channel in button property or closure
+            # Using partial or lambda properly
+            btn.clicked.connect(lambda checked, c=ch: self.play_channel(c))
+            
+            self.card_layout.addWidget(btn)
+
+    def filter_channels(self):
+        search_text = self.search_input.text().lower()
+        category = self.category_combo.currentText()
+        
+        filtered = []
+        for ch in self.channels:
+            matches_search = search_text in ch.name.lower()
+            matches_category = category == "All Categories" or ch.group == category
+            
+            if matches_search and matches_category:
+                filtered.append(ch)
+        
+        self.update_channel_list(filtered)
+
+    def play_channel(self, channel):
+        if channel:
+            print(f"Playing: {channel.name} -> {channel.url}")
+            self.video_player.set_media(channel.url)
+            self.video_player.play()
+            self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPause))
+            self.timer.start()
+
+    def play_channel_item_click(self, item): 
+        # Legacy support/unused
+        pass
+        
+    def get_icon(self, standard_pixmap):
+        icon = self.style().standardIcon(standard_pixmap)
+        pixmap = icon.pixmap(32, 32)
+        if not pixmap.isNull():
+            new_pixmap = pixmap.copy()
+            new_pixmap.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(new_pixmap)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+            painter.drawPixmap(0, 0, pixmap)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            painter.fillRect(new_pixmap.rect(), QColor("white"))
+            painter.end()
+            return QIcon(new_pixmap)
+        return icon
+
+    def toggle_play(self):
+        if self.video_player.is_playing():
+            self.video_player.pause()
+            self.timer.stop()
+            self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPlay))
+        else:
+            self.video_player.play()
+            self.timer.start()
+            self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPause))
+
+    def stop_playback(self):
+        self.video_player.stop()
+        self.timer.stop()
+        self.seek_slider.setValue(0)
+        self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPlay))
+
+    def toggle_mute(self):
+        if self.video_player.player.audio_get_mute():
+            self.video_player.player.audio_set_mute(False)
+            self.vol_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaVolume))
+        else:
+            self.video_player.player.audio_set_mute(True)
+            self.vol_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaVolumeMuted))
+
+    def toggle_sidebar(self):
+        # Deprecated
+        pass
+
+    def toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
