@@ -12,7 +12,7 @@ from . import styles
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("IPTV Pro Player")
+        self.setWindowTitle("IPTV Pro Player - Made by Ammad Younas")
         self.resize(1200, 800)
         
         self.channels = []
@@ -41,7 +41,7 @@ class MainWindow(QMainWindow):
         # === TOP BAR ===
         top_bar = QFrame()
         top_bar.setObjectName("topBar")
-        top_bar.setFixedHeight(60) # Slightly compact
+        top_bar.setFixedHeight(60)
         top_layout = QHBoxLayout(top_bar)
         top_layout.setContentsMargins(20, 5, 20, 5)
         top_layout.setSpacing(15)
@@ -114,7 +114,7 @@ class MainWindow(QMainWindow):
 
         # Video Player
         self.video_player = VideoPlayer()
-        player_layout.addWidget(self.video_player, 1) # Give player ALL expansion space
+        player_layout.addWidget(self.video_player, 1)
 
         self.player_splitter.addWidget(player_frame)
         
@@ -122,11 +122,11 @@ class MainWindow(QMainWindow):
         controls_container = QFrame()
         controls_container.setObjectName("controlsFrame")
         controls_container.setStyleSheet("background-color: #0d0d0d;")
-        controls_container.setMinimumHeight(70) # Minimum height instead of fixed
+        controls_container.setMinimumHeight(70)
         
         controls_layout = QVBoxLayout(controls_container)
-        controls_layout.setContentsMargins(15, 5, 15, 5) # Added padding back
-        controls_layout.setSpacing(10) # Added gap between slider and buttons
+        controls_layout.setContentsMargins(15, 5, 15, 5)
+        controls_layout.setSpacing(10)
         
         # Seek Bar
         self.seek_slider = QSlider(Qt.Orientation.Horizontal)
@@ -188,8 +188,8 @@ class MainWindow(QMainWindow):
 
         # --- RIGHT: SIDEBAR (Channel Shelf) ---
         self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True) # Important for horizontal scroll
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded) # Enable horizontal
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll_area.setStyleSheet("border: none; background-color: #121212; border-left: 1px solid #222;")
         
         self.scroll_content = QWidget()
@@ -281,14 +281,13 @@ class MainWindow(QMainWindow):
             if i >= limit: break
             
             # Create Card Button
-            btn = QPushButton(f"  {ch.name}") # visual padding
+            btn = QPushButton(f"  {ch.name}")
             btn.setObjectName("channelCard")
             # Width fills layout, Height fixed
             btn.setFixedHeight(50) 
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             
             # Store channel in button property or closure
-            # Using partial or lambda properly
             btn.clicked.connect(lambda checked, c=ch: self.play_channel(c))
             
             self.card_layout.addWidget(btn)
@@ -315,10 +314,6 @@ class MainWindow(QMainWindow):
             self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPause))
             self.timer.start()
 
-    def play_channel_item_click(self, item): 
-        # Legacy support/unused
-        pass
-        
     def get_icon(self, standard_pixmap):
         icon = self.style().standardIcon(standard_pixmap)
         pixmap = icon.pixmap(32, 32)

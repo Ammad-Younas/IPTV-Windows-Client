@@ -24,25 +24,21 @@ class M3UParser:
                 continue
                 
             if line.startswith("#EXTINF:"):
-                # Parse metadata
-                # Format example: #EXTINF:-1 tvg-id="" tvg-logo="url" group-title="Group",Channel Name
+                
                 meta_part, _, name = line.partition(',')
                 current_channel['name'] = name.strip()
                 
-                # Extract logo
                 if 'tvg-logo="' in meta_part:
                     logo_start = meta_part.find('tvg-logo="') + 10
                     logo_end = meta_part.find('"', logo_start)
                     current_channel['logo'] = meta_part[logo_start:logo_end]
                 
-                # Extract group
                 if 'group-title="' in meta_part:
                     group_start = meta_part.find('group-title="') + 13
                     group_end = meta_part.find('"', group_start)
                     current_channel['group'] = meta_part[group_start:group_end]
                 
             elif not line.startswith("#"):
-                # This is the URL
                 if 'name' in current_channel:
                     channels.append(Channel(
                         name=current_channel['name'],

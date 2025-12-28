@@ -4,19 +4,12 @@ from PyQt6.QtWidgets import QFrame
 from PyQt6.QtCore import pyqtSignal
 
 class VideoPlayer(QFrame):
-    """
-    A PyQt6 widget that embeds a VLC player.
-    """
-    # Signals
     errorOccurred = pyqtSignal(str)
-    stateChanged = pyqtSignal(bool) # True for playing, False for stopped/paused
+    stateChanged = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        # Initialize VLC
-        # --input-repeat=-1 to disable repeat
-        # --no-video-title-show to hide title overlay
         try:
             self.instance = vlc.Instance('--no-video-title-show', '--quiet')
             self.player = self.instance.media_player_new()
@@ -34,7 +27,8 @@ class VideoPlayer(QFrame):
         media = self.instance.media_new(url)
         self.player.set_media(media)
         
-        # Connect to the window handle
+        self.player.set_media(media)
+        
         if sys.platform.startswith('linux'):
             self.player.set_xwindow(self.winId())
         elif sys.platform == "win32":
@@ -59,7 +53,6 @@ class VideoPlayer(QFrame):
             self.stateChanged.emit(False)
             
     def set_volume(self, volume):
-        """Set volume (0-100)"""
         if self.player:
             self.player.audio_set_volume(volume)
 
@@ -69,13 +62,11 @@ class VideoPlayer(QFrame):
         return False
 
     def get_position(self):
-        """Get position 0.0 to 1.0"""
         if self.player:
             return self.player.get_position()
         return 0
 
     def set_position(self, position):
-        """Set position 0.0 to 1.0"""
         if self.player:
             self.player.set_position(position)
             

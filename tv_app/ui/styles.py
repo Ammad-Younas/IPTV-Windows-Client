@@ -18,7 +18,7 @@ QPushButton#channelCard {
     border: 1px solid #333333;
     border-radius: 6px;
     padding: 5px 10px;
-    text-align: left; /* Align text left for sidebar */
+    text-align: left;
     color: #e0e0e0;
     font-size: 13px;
     font-weight: 500;
@@ -111,8 +111,8 @@ QListWidget::item:hover {
 QListWidget::item:selected {
     background-color: #1f1f1f;
     color: #ffffff;
-    border-left: 3px solid #ffffff; /* Modern accent indicator */
-    padding-left: 13px; /* Adjust for border */
+    border-left: 3px solid #ffffff;
+    padding-left: 13px;
 }
 
 /* === SCROLLBARS (Minimalist) === */
@@ -140,12 +140,12 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
 
 /* === PLAYER AREA === */
 QFrame#playerContainer {
-    background-color: #000000; /* Deep black for video area */
+    background-color: #000000;
 }
 
 /* Controls Bar */
 QFrame#controlsFrame {
-    background-color: #0f0f0f; /* Seamless with player */
+    background-color: #0f0f0f;
     border-top: 1px solid #1a1a1a;
 }
 
@@ -168,7 +168,7 @@ QPushButton:pressed {
 
 /* Source specific buttons (Load/Folder) to look a bit more tactile */
 QWidget > QPushButton { 
-    /* This targets generic buttons in sidebar mostly, unless overridden */
+    
     font-size: 13px;
     font-weight: 600;
 }
@@ -177,13 +177,13 @@ QWidget > QPushButton {
 QFrame#controlsFrame QPushButton {
     background-color: transparent;
     border: none;
-    border-radius: 15px; /* Perfect circle for 30x30 buttons */
+    border-radius: 15px;
     color: #ffffff;
-    padding: 0px; /* Remove padding to center icon */
+    padding: 0px;
 }
 
 QFrame#controlsFrame QPushButton:hover {
-    background-color: transparent; /* No hover effect for other buttons too */
+    background-color: transparent;
 }
 
 QFrame#controlsFrame QPushButton:pressed {
@@ -197,7 +197,7 @@ QPushButton#playButton {
 }
 
 QPushButton#playButton:hover {
-    /* Completely disabled - no change on hover */
+    
     background-color: rgba(255, 255, 255, 0.15);
     border: 1px solid rgba(255, 255, 255, 0.3);
 }
@@ -215,12 +215,12 @@ QSlider::groove:horizontal {
 }
 
 QSlider::sub-page:horizontal {
-    background: #ffffff; /* Progress color */
+    background: #ffffff;
     border-radius: 2px;
 }
 
 QSlider::add-page:horizontal {
-    background: #333333; /* Remaining track color */
+    background: #333333;
     border-radius: 2px;
 }
 
