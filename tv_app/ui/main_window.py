@@ -2,8 +2,11 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
     QListWidget, QListWidgetItem, QLineEdit, QLabel, QPushButton,
     QSplitter, QFrame, QComboBox, QSlider, QStyle, QFileDialog, QScrollArea
 )
-from PyQt6.QtCore import Qt, QSize, QTimer
-from PyQt6.QtGui import QIcon, QAction, QPainter, QColor
+from PyQt6.QtCore import Qt, QSize, QTimer, QUrl
+from PyQt6.QtGui import QIcon, QAction, QPainter, QColor, QPixmap
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+import json
+import os
 
 from playlist import M3UParser, Channel
 from player import VideoPlayer
@@ -27,8 +30,41 @@ class MainWindow(QMainWindow):
         self.setup_ui()
         self.apply_styles()
         
+        # Data
+        self.logo_map = {}
+        self.country_map = {}
+        self.load_reference_data()
+        
+        # Network Manager for Logos
+        self.nam = QNetworkAccessManager()
+        self.nam.finished.connect(self.on_image_loaded)
+        self.pending_icon_requests = {} # reply -> button
+
+        
         # Load Default
         self.load_channels()
+
+    def load_reference_data(self):
+        # Load Countries
+        try:
+            with open('tv_app/data/countries.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                for item in data:
+                    self.country_map[item['code'].upper()] = item
+        except Exception as e:
+            print(f"Error loading countries: {e}")
+
+        # Load Logos
+        try:
+            with open('tv_app/data/logos.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                for item in data:
+                    # Map by channel name (normalized if possible)
+                    # The JSON has 'channel' key which usually matches tvg-id or name
+                    if 'channel' in item and 'url' in item:
+                        self.logo_map[item['channel'].lower()] = item['url']
+        except Exception as e:
+            print(f"Error loading logos: {e}")
 
     def setup_ui(self):
         # Main Widget
@@ -73,6 +109,13 @@ class MainWindow(QMainWindow):
         self.category_combo.setFixedWidth(160)
         self.category_combo.currentTextChanged.connect(self.filter_channels)
         top_layout.addWidget(self.category_combo)
+
+        # Country Filter
+        self.country_combo = QComboBox()
+        self.country_combo.addItem("All Countries")
+        self.country_combo.setFixedWidth(160)
+        self.country_combo.currentTextChanged.connect(self.filter_channels)
+        top_layout.addWidget(self.country_combo)
 
         top_layout.addStretch()
 
@@ -252,8 +295,72 @@ class MainWindow(QMainWindow):
         self.category_combo.addItem("All Categories")
         self.category_combo.addItems(sorted(list(categories)))
         
+        # Extract Countries
+        countries = set()
+        for ch in self.channels:
+            if ch.country_code:
+                countries.add(ch.country_code)
+        
+        # Sort countries by name if available
+        country_items = []
+        for code in countries:
+            display_name = code
+            if code.upper() in self.country_map:
+                c_data = self.country_map[code.upper()]
+                display_name = f"{c_data['flag']} {c_data['name']}"
+            country_items.append((display_name, code))
+            
+        country_items.sort(key=lambda x: x[0])
+        
+        self.country_combo.clear()
+        self.country_combo.addItem("All Countries", "All")
+        for disp, code in country_items:
+            self.country_combo.addItem(disp, code)
+
         self.update_channel_list(self.channels)
         self.search_input.setPlaceholderText("Search")
+
+    def filter_channels(self):
+        search_text = self.search_input.text().lower()
+        category = self.category_combo.currentText()
+        country_code = self.country_combo.currentData()
+        
+        filtered = []
+        for ch in self.channels:
+            matches_search = search_text in ch.name.lower()
+            matches_category = category == "All Categories" or ch.group == category
+            
+            matches_country = True
+            if country_code and country_code != "All":
+                matches_country = ch.country_code == country_code
+            
+            if matches_search and matches_category and matches_country:
+                filtered.append(ch)
+        
+        self.update_channel_list(filtered)
+
+    def load_icon_async(self, url, button):
+        if not url:
+            return
+            
+        # Check cache or simple request
+        req = QNetworkRequest(QUrl(url))
+        req.setAttribute(QNetworkRequest.Attribute.Http2AllowedAttribute, False)
+        reply = self.nam.get(req)
+        self.pending_icon_requests[reply] = button
+
+    def on_image_loaded(self, reply):
+        button = self.pending_icon_requests.pop(reply, None)
+        if button and reply.error() == QNetworkReply.NetworkError.NoError:
+            data = reply.readAll()
+            pixmap = QPixmap()
+            if pixmap.loadFromData(data):
+                try:
+                    icon = QIcon(pixmap)
+                    button.setIcon(icon)
+                except RuntimeError:
+                    pass
+        reply.deleteLater()
 
     def seek_started(self):
         self.timer.stop()
@@ -269,6 +376,9 @@ class MainWindow(QMainWindow):
             self.seek_slider.setValue(int(pos * 1000))
 
     def update_channel_list(self, channels):
+        # Clear pending requests map to avoid holding references to deleted buttons
+        self.pending_icon_requests.clear()
+
         # Clear existing items
         while self.card_layout.count():
             item = self.card_layout.takeAt(0)
@@ -287,24 +397,28 @@ class MainWindow(QMainWindow):
             btn.setFixedHeight(50) 
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             
+            # Determine Logo URL
+            logo_url = ch.logo
+            if not logo_url:
+                if ch.tvg_id and ch.tvg_id.lower() in self.logo_map:
+                    logo_url = self.logo_map[ch.tvg_id.lower()]
+                elif ch.name.lower() in self.logo_map:
+                    logo_url = self.logo_map[ch.name.lower()]
+            
+            if logo_url:
+                # Set default icon while loading
+                btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_FileIcon))
+                self.load_icon_async(logo_url, btn)
+            else:
+                btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_FileIcon))
+            
+            # Resize icon for better visibility
+            btn.setIconSize(QSize(32, 32))
+
             # Store channel in button property or closure
             btn.clicked.connect(lambda checked, c=ch: self.play_channel(c))
             
             self.card_layout.addWidget(btn)
-
-    def filter_channels(self):
-        search_text = self.search_input.text().lower()
-        category = self.category_combo.currentText()
-        
-        filtered = []
-        for ch in self.channels:
-            matches_search = search_text in ch.name.lower()
-            matches_category = category == "All Categories" or ch.group == category
-            
-            if matches_search and matches_category:
-                filtered.append(ch)
-        
-        self.update_channel_list(filtered)
 
     def play_channel(self, channel):
         if channel:

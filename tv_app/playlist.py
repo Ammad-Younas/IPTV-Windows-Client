@@ -9,6 +9,8 @@ class Channel:
     logo: Optional[str] = None
     group: Optional[str] = None
     country: Optional[str] = None
+    tvg_id: Optional[str] = None
+    country_code: Optional[str] = None
 
 class M3UParser:
     @staticmethod
@@ -24,19 +26,39 @@ class M3UParser:
                 continue
                 
             if line.startswith("#EXTINF:"):
-                
+                # Basic parsing - improved regex could be used but sticking to string ops for now
                 meta_part, _, name = line.partition(',')
                 current_channel['name'] = name.strip()
                 
-                if 'tvg-logo="' in meta_part:
-                    logo_start = meta_part.find('tvg-logo="') + 10
-                    logo_end = meta_part.find('"', logo_start)
-                    current_channel['logo'] = meta_part[logo_start:logo_end]
+                # Helper to extract attributes by key="value"
+                def extract_attr(key, text):
+                    pattern = f'{key}="'
+                    if pattern in text:
+                        start = text.find(pattern) + len(pattern)
+                        end = text.find('"', start)
+                        if end != -1:
+                            return text[start:end]
+                    return None
+
+                current_channel['logo'] = extract_attr('tvg-logo', meta_part)
+                current_channel['group'] = extract_attr('group-title', meta_part)
+                current_channel['tvg_id'] = extract_attr('tvg-id', meta_part)
+                current_channel['country_code'] = extract_attr('tvg-country', meta_part)
                 
-                if 'group-title="' in meta_part:
-                    group_start = meta_part.find('group-title="') + 13
-                    group_end = meta_part.find('"', group_start)
-                    current_channel['group'] = meta_part[group_start:group_end]
+                # Fallback: Extract country from tvg-id if not explicitly provided
+                # Format often: "ChannelName.XX" or "ChannelName.XX@..."
+                if not current_channel['country_code'] and current_channel['tvg_id']:
+                    tid = current_channel['tvg_id']
+                    # Check for pattern .XX (where XX is 2 chars)
+                    # May handle .XX@...
+                    parts = tid.split('.')
+                    if len(parts) > 1:
+                        potential_code = parts[-1]
+                        if '@' in potential_code:
+                            potential_code = potential_code.split('@')[0]
+                        
+                        if len(potential_code) == 2 and potential_code.isalpha():
+                            current_channel['country_code'] = potential_code
                 
             elif not line.startswith("#"):
                 if 'name' in current_channel:
@@ -44,7 +66,9 @@ class M3UParser:
                         name=current_channel['name'],
                         url=line,
                         logo=current_channel.get('logo'),
-                        group=current_channel.get('group', 'Uncategorized')
+                        group=current_channel.get('group', 'Uncategorized'),
+                        tvg_id=current_channel.get('tvg_id'),
+                        country_code=current_channel.get('country_code')
                     ))
                     current_channel = {}
                     
