@@ -1,17 +1,48 @@
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QListWidget, QListWidgetItem, QLineEdit, QLabel, QPushButton,
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
     QSplitter, QFrame, QComboBox, QSlider, QStyle, QFileDialog, QScrollArea
 )
-from PyQt6.QtCore import Qt, QSize, QTimer, QUrl
-from PyQt6.QtGui import QIcon, QAction, QPainter, QColor, QPixmap
+from PyQt6.QtCore import Qt, QSize, QTimer, QUrl, QThread, pyqtSignal
+from PyQt6.QtGui import QIcon, QPainter, QColor, QPixmap
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 import json
-import os
 
 from playlist import M3UParser, Channel
 from player import VideoPlayer
 from . import styles
 from yt_handler import YouTubeHandler
+
+class PlaylistWorker(QThread):
+    finished = pyqtSignal(list)
+    error = pyqtSignal(str)
+
+    def __init__(self, url):
+        super().__init__()
+        self.url = url
+
+    def run(self):
+        try:
+            channels = YouTubeHandler.parse_playlist(self.url)
+            self.finished.emit(channels)
+        except Exception as e:
+            self.error.emit(str(e))
+
+class StreamResolverWorker(QThread):
+    finished = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, url):
+        super().__init__()
+        self.url = url
+
+    def run(self):
+        try:
+            stream_url = YouTubeHandler.get_stream_url(self.url)
+            if stream_url:
+                self.finished.emit(stream_url)
+            else:
+                self.error.emit("Could not resolve stream URL")
+        except Exception as e:
+            self.error.emit(str(e))
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -77,10 +108,12 @@ class MainWindow(QMainWindow):
             # Check if playlist
             if "list=" in url_text:
                 self.search_input.setText("Loading YouTube Playlist...")
-                QApplication.processEvents()
-                self.channels = YouTubeHandler.parse_playlist(url_text)
-                self.refresh_ui_with_channels()
-                self.search_input.clear()
+                self.status_loading(True)
+                
+                self.playlist_worker = PlaylistWorker(url_text)
+                self.playlist_worker.finished.connect(self.on_playlist_loaded)
+                self.playlist_worker.error.connect(self.on_playlist_error)
+                self.playlist_worker.start()
             else:
                 self.channels = [Channel(name="YouTube Video", url=url_text, group="YouTube")]
                 self.refresh_ui_with_channels()
@@ -314,7 +347,19 @@ class MainWindow(QMainWindow):
         all_channels = M3UParser.parse_from_url(url)
         self.channels = all_channels
         self.refresh_ui_with_channels()
+        self.refresh_ui_with_channels()
         
+    def on_playlist_loaded(self, channels):
+        self.status_loading(False)
+        self.channels = channels
+        self.refresh_ui_with_channels()
+        self.search_input.clear()
+        
+    def on_playlist_error(self, error_msg):
+        self.status_loading(False)
+        print(f"Playlist Error: {error_msg}")
+        self.search_input.setPlaceholderText("Error loading playlist")
+
     def browse_folder(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Folder", "")
         if dir_path:
@@ -412,7 +457,7 @@ class MainWindow(QMainWindow):
         self.timer.start()
 
     def update_video_position(self):
-        if self.video_player.is_playing():
+        if self.video_player.is_playing() and not self.seek_slider.isSliderDown():
             pos = self.video_player.get_position()
             self.seek_slider.setValue(int(pos * 1000))
 
@@ -468,23 +513,36 @@ class MainWindow(QMainWindow):
             # Resolve stream URL
             stream_url = channel.url
             if YouTubeHandler.is_youtube_url(stream_url):
-                self.play_btn.setDisabled(True) # Disable avoid spam
+                self.play_btn.setDisabled(True)
                 self.search_input.setPlaceholderText("Resolving YouTube URL...")
-                QApplication.processEvents()
-                resolved = YouTubeHandler.get_stream_url(stream_url)
-                self.play_btn.setDisabled(False)
-                self.search_input.setPlaceholderText("Search")
                 
-                if resolved:
-                    print(f"Resolved YouTube Stream: {resolved}")
-                    stream_url = resolved
-                else:
-                    print("Could not resolve YouTube URL")
-                    return
+                self.current_resolving_worker = StreamResolverWorker(stream_url)
+                self.current_resolving_worker.finished.connect(lambda url: self.on_stream_resolved(url))
+                self.current_resolving_worker.error.connect(self.on_resolve_error)
+                self.current_resolving_worker.start()
+                return
 
-            self.video_player.set_media(stream_url)
-            self.video_player.play()
-            self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPause))
+            self.play_video(stream_url)
+
+    def on_stream_resolved(self, stream_url):
+        self.play_btn.setDisabled(False)
+        self.search_input.setPlaceholderText("Search")
+        print(f"Resolved YouTube Stream: {stream_url}")
+        self.play_video(stream_url)
+
+    def on_resolve_error(self, error):
+        self.play_btn.setDisabled(False)
+        self.search_input.setPlaceholderText("Error resolving URL")
+        print(f"Resolve Error: {error}")
+
+    def play_video(self, url):
+        # Force stop and wait a moment (synchronous stop usually enough for VLC binding)
+        self.video_player.stop() 
+        QApplication.processEvents() # Process any pending stop events
+        
+        self.video_player.set_media(url)
+        self.video_player.play()
+        self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPause))
 
     def change_volume(self, value):
         self.video_player.set_volume(value)

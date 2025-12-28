@@ -11,7 +11,7 @@ class VideoPlayer(QFrame):
         super().__init__(parent)
         
         try:
-            self.instance = vlc.Instance('--no-video-title-show', '--quiet')
+            self.instance = vlc.Instance('--no-video-title-show', '--quiet', '--mouse-hide-timeout=0')
             self.player = self.instance.media_player_new()
         except NameError:
              print("VLC not found or python-vlc not installed properly.")
