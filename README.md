@@ -40,3 +40,7 @@ python tv_app/main.py
   - `player.py`: Handles video playback logic.
   - `playlist.py`: Manages playlist parsing and storage.
   - `ui/`: Contains UI components and styles.
+
+## Acknowledgements
+
+- Shoutout to [iptv-org](https://github.com/iptv-org/iptv) for the comprehensive collection of publicly available IPTV channels.
