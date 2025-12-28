@@ -84,9 +84,9 @@ class MainWindow(QMainWindow):
         folder_btn.setStyleSheet("font-weight: bold; padding: 6px 12px;")
         top_layout.addWidget(folder_btn)
 
-        # Sidebar Toggle Button
+        # Sidebar Toggle Button - Changed to Right Arrow
         self.toggle_btn = QPushButton()
-        self.toggle_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_TitleBarMenuButton))
+        self.toggle_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_ArrowRight))
         self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.toggle_btn.clicked.connect(self.toggle_sidebar)
         self.toggle_btn.setFixedSize(35, 35)
@@ -94,13 +94,17 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(top_bar)
 
-        # === CONTENT BODY (Splitter: Player Left | Sidebar Right) ===
-        # Use QSplitter for resizable sidebar
+        # === CONTENT BODY (Horizontal Splitter: Player Left | Sidebar Right) ===
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.content_splitter.setHandleWidth(2)
         self.content_splitter.setStyleSheet("QSplitter::handle { background-color: #222; }")
         
-        # --- LEFT: PLAYER AREA ---
+        # --- LEFT: PLAYER AREA (with vertical splitter inside) ---
+        # Create a vertical splitter for the player area
+        self.player_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.player_splitter.setHandleWidth(2)
+        self.player_splitter.setStyleSheet("QSplitter::handle { background-color: #222; }")
+        
         player_frame = QFrame()
         player_frame.setObjectName("playerContainer")
         player_frame.setStyleSheet("background-color: black;")
@@ -112,11 +116,13 @@ class MainWindow(QMainWindow):
         self.video_player = VideoPlayer()
         player_layout.addWidget(self.video_player, 1) # Give player ALL expansion space
 
-        # Controls Container
+        self.player_splitter.addWidget(player_frame)
+        
+        # Controls Container (in the vertical splitter)
         controls_container = QFrame()
         controls_container.setObjectName("controlsFrame")
         controls_container.setStyleSheet("background-color: #0d0d0d;")
-        controls_container.setFixedHeight(70) # Increased height for gap
+        controls_container.setMinimumHeight(70) # Minimum height instead of fixed
         
         controls_layout = QVBoxLayout(controls_container)
         controls_layout.setContentsMargins(15, 5, 15, 5) # Added padding back
@@ -173,11 +179,14 @@ class MainWindow(QMainWindow):
         btns_row.addWidget(self.fs_btn)
 
         controls_layout.addLayout(btns_row)
-        player_layout.addWidget(controls_container) # No stretch here, fixed height handles it
+        self.player_splitter.addWidget(controls_container)
         
-        self.content_splitter.addWidget(player_frame)
+        # Set initial sizes for player splitter (player takes most space, controls fixed)
+        self.player_splitter.setSizes([730, 70])
+        
+        self.content_splitter.addWidget(self.player_splitter)
 
-        # --- RIGHT: SIDEBAR (Channel Shelf moved here) ---
+        # --- RIGHT: SIDEBAR (Channel Shelf) ---
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True) # Important for horizontal scroll
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded) # Enable horizontal
@@ -350,16 +359,19 @@ class MainWindow(QMainWindow):
             self.vol_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaVolumeMuted))
 
     def toggle_sidebar(self):
-        # Initial implementation for QSplitter layout
+        # Toggle sidebar visibility and update icon
         if self.scroll_area.isVisible():
             self.scroll_area.hide()
+            self.toggle_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_ArrowLeft))
         else:
             self.scroll_area.show()
+            self.toggle_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_ArrowRight))
 
     def toggle_fullscreen(self):
         if self.isFullScreen():
             self.showNormal()
             self.scroll_area.show()
+            self.toggle_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_ArrowRight))
         else:
             self.showFullScreen()
             self.scroll_area.hide()

@@ -183,27 +183,25 @@ QFrame#controlsFrame QPushButton {
 }
 
 QFrame#controlsFrame QPushButton:hover {
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: transparent; /* No hover effect for other buttons too */
 }
 
 QFrame#controlsFrame QPushButton:pressed {
     background-color: rgba(255, 255, 255, 0.2);
 }
 
-/* Play Button (Hero) - Specific Colors */
+/* Play Button (Hero) - No hover effect */
 QPushButton#playButton {
     background-color: rgba(255, 255, 255, 0.15);
     border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 QPushButton#playButton:hover {
-    background-color: rgba(255, 255, 255, 0.3);
-    border: 1px solid #ffffff;
+    /* Completely disabled - no change on hover */
+    background-color: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
-QPushButton#playButton:hover {
-    background-color: rgba(255, 255, 255, 0.2);
-    border: 1px solid #ffffff;
-}
+
 QPushButton#playButton:pressed {
     background-color: rgba(255, 255, 255, 0.3);
 }
