@@ -84,13 +84,21 @@ class MainWindow(QMainWindow):
         folder_btn.setStyleSheet("font-weight: bold; padding: 6px 12px;")
         top_layout.addWidget(folder_btn)
 
+        # Sidebar Toggle Button
+        self.toggle_btn = QPushButton()
+        self.toggle_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_TitleBarMenuButton))
+        self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.toggle_btn.clicked.connect(self.toggle_sidebar)
+        self.toggle_btn.setFixedSize(35, 35)
+        top_layout.addWidget(self.toggle_btn)
+
         main_layout.addWidget(top_bar)
 
         # === CONTENT BODY (Splitter: Player Left | Sidebar Right) ===
-        content_widget = QWidget()
-        content_layout = QHBoxLayout(content_widget)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(0)
+        # Use QSplitter for resizable sidebar
+        self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.content_splitter.setHandleWidth(2)
+        self.content_splitter.setStyleSheet("QSplitter::handle { background-color: #222; }")
         
         # --- LEFT: PLAYER AREA ---
         player_frame = QFrame()
@@ -108,11 +116,11 @@ class MainWindow(QMainWindow):
         controls_container = QFrame()
         controls_container.setObjectName("controlsFrame")
         controls_container.setStyleSheet("background-color: #0d0d0d;")
-        controls_container.setFixedHeight(55) # Force compact height
+        controls_container.setFixedHeight(70) # Increased height for gap
         
         controls_layout = QVBoxLayout(controls_container)
-        controls_layout.setContentsMargins(10, 0, 10, 0) # Zero vertical padding, small side padding
-        controls_layout.setSpacing(0)
+        controls_layout.setContentsMargins(15, 5, 15, 5) # Added padding back
+        controls_layout.setSpacing(10) # Added gap between slider and buttons
         
         # Seek Bar
         self.seek_slider = QSlider(Qt.Orientation.Horizontal)
@@ -129,7 +137,7 @@ class MainWindow(QMainWindow):
 
         # Buttons Row
         btns_row = QHBoxLayout()
-        btns_row.setContentsMargins(0, 0, 0, 2) # Minimal bottom padding
+        btns_row.setContentsMargins(0, 0, 0, 0)
         btns_row.setSpacing(15)
         
         self.play_btn = QPushButton()
@@ -167,13 +175,12 @@ class MainWindow(QMainWindow):
         controls_layout.addLayout(btns_row)
         player_layout.addWidget(controls_container) # No stretch here, fixed height handles it
         
-        content_layout.addWidget(player_frame, stretch=4)
+        self.content_splitter.addWidget(player_frame)
 
         # --- RIGHT: SIDEBAR (Channel Shelf moved here) ---
         self.scroll_area = QScrollArea()
-        self.scroll_area.setFixedWidth(320) # Fixed sidebar width
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setWidgetResizable(True) # Important for horizontal scroll
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded) # Enable horizontal
         self.scroll_area.setStyleSheet("border: none; background-color: #121212; border-left: 1px solid #222;")
         
         self.scroll_content = QWidget()
@@ -185,9 +192,12 @@ class MainWindow(QMainWindow):
         self.card_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         
         self.scroll_area.setWidget(self.scroll_content)
-        content_layout.addWidget(self.scroll_area, stretch=1) # Sidebar takes 20% width
+        self.content_splitter.addWidget(self.scroll_area)
+        
+        # Initial Sizes (approx 75% | 25%)
+        self.content_splitter.setSizes([900, 300])
 
-        main_layout.addWidget(content_widget)
+        main_layout.addWidget(self.content_splitter)
 
 
 
