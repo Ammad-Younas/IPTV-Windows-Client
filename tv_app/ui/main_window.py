@@ -340,8 +340,11 @@ class MainWindow(QMainWindow):
             self.vol_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaVolumeMuted))
 
     def toggle_sidebar(self):
-        # Deprecated
-        pass
+        # Initial implementation for QSplitter layout
+        if self.scroll_area.isVisible():
+            self.scroll_area.hide()
+        else:
+            self.scroll_area.show()
 
     def toggle_fullscreen(self):
         if self.isFullScreen():
