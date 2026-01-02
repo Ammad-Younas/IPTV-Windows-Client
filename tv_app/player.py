@@ -27,8 +27,6 @@ class VideoPlayer(QFrame):
         media = self.instance.media_new(url)
         self.player.set_media(media)
         
-        self.player.set_media(media)
-        
         if sys.platform.startswith('linux'):
             self.player.set_xwindow(self.winId())
         elif sys.platform == "win32":

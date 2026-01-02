@@ -45,12 +45,8 @@ class M3UParser:
                 current_channel['tvg_id'] = extract_attr('tvg-id', meta_part)
                 current_channel['country_code'] = extract_attr('tvg-country', meta_part)
                 
-                # Fallback: Extract country from tvg-id if not explicitly provided
-                # Format often: "ChannelName.XX" or "ChannelName.XX@..."
                 if not current_channel['country_code'] and current_channel['tvg_id']:
                     tid = current_channel['tvg_id']
-                    # Check for pattern .XX (where XX is 2 chars)
-                    # May handle .XX@...
                     parts = tid.split('.')
                     if len(parts) > 1:
                         potential_code = parts[-1]
@@ -77,7 +73,7 @@ class M3UParser:
     @staticmethod
     def parse_from_url(url: str) -> List[Channel]:
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=30)
             response.raise_for_status()
             return M3UParser.parse(response.text)
         except Exception as e:

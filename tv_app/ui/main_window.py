@@ -5,6 +5,8 @@ from PyQt6.QtCore import Qt, QSize, QTimer, QUrl, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon, QPainter, QColor, QPixmap
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 import json
+import requests
+import sys
 
 from playlist import M3UParser, Channel
 from player import VideoPlayer
@@ -22,6 +24,21 @@ class PlaylistWorker(QThread):
     def run(self):
         try:
             channels = YouTubeHandler.parse_playlist(self.url)
+            self.finished.emit(channels)
+        except Exception as e:
+            self.error.emit(str(e))
+
+class M3UPlaylistWorker(QThread):
+    finished = pyqtSignal(list)
+    error = pyqtSignal(str)
+
+    def __init__(self, url):
+        super().__init__()
+        self.url = url
+
+    def run(self):
+        try:
+            channels = M3UParser.parse_from_url(self.url)
             self.finished.emit(channels)
         except Exception as e:
             self.error.emit(str(e))
@@ -52,6 +69,7 @@ class MainWindow(QMainWindow):
         
         self.channels = []
         self.current_playlist_url = "https://iptv-org.github.io/iptv/index.m3u"
+        self.is_loading_media = False
         
         # Playback Timer
         self.timer = QTimer(self)
@@ -72,9 +90,11 @@ class MainWindow(QMainWindow):
         self.nam.finished.connect(self.on_image_loaded)
         self.pending_icon_requests = {} # reply -> button
 
+        # Worker for async loading
+        self.m3u_worker = None
         
-        # Load Default
-        self.load_channels()
+        # Load Default playlist asynchronously
+        QTimer.singleShot(100, self.load_channels)
 
     def load_reference_data(self):
         # Load Countries
@@ -125,7 +145,7 @@ class MainWindow(QMainWindow):
             parser = M3UParser()
             try:
                 # We need to fetch it first.
-                response = requests.get(url_text)
+                response = requests.get(url_text, timeout=30)
                 if response.status_code == 200:
                     self.channels = parser.parse(response.text)
                     self.refresh_ui_with_channels()
@@ -334,21 +354,34 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(styles.DARK_THEME)
 
     def load_channels(self):
-        # Initial load
+        # Initial load - async
         self.load_from_url(self.current_playlist_url)
-
-
 
     def load_from_url(self, url):
         self.search_input.setPlaceholderText("Loading...")
         self.status_loading(True)
-        QApplication.processEvents()
         
-        all_channels = M3UParser.parse_from_url(url)
-        self.channels = all_channels
-        self.refresh_ui_with_channels()
-        self.refresh_ui_with_channels()
+        # Load asynchronously using worker thread
+        if self.m3u_worker and self.m3u_worker.isRunning():
+            self.m3u_worker.quit()
+            self.m3u_worker.wait()
         
+        self.m3u_worker = M3UPlaylistWorker(url)
+        self.m3u_worker.finished.connect(self.on_m3u_loaded)
+        self.m3u_worker.error.connect(self.on_m3u_error)
+        self.m3u_worker.start()
+        
+    def on_m3u_loaded(self, channels):
+        self.status_loading(False)
+        self.channels = channels
+        self.refresh_ui_with_channels()
+        self.search_input.setPlaceholderText("Search channels...")
+        
+    def on_m3u_error(self, error_msg):
+        self.status_loading(False)
+        self.search_input.setPlaceholderText(f"Error: {error_msg}")
+        print(f"Error loading M3U: {error_msg}")
+    
     def on_playlist_loaded(self, channels):
         self.status_loading(False)
         self.channels = channels
@@ -472,42 +505,51 @@ class MainWindow(QMainWindow):
             if widget:
                 widget.deleteLater()
         
+        # Process in batches to keep UI responsive
         limit = 500
-        for i, ch in enumerate(channels):
-            if i >= limit: break
+        batch_size = 50
+        
+        def add_batch(start_idx):
+            end_idx = min(start_idx + batch_size, len(channels), limit)
             
-            # Create Card Button
-            btn = QPushButton(f"  {ch.name}")
-            btn.setObjectName("channelCard")
-            # Width fills layout, Height fixed
-            btn.setFixedHeight(50) 
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            for i in range(start_idx, end_idx):
+                ch = channels[i]
+                
+                # Create Card Button
+                btn = QPushButton(f"  {ch.name}")
+                btn.setObjectName("channelCard")
+                btn.setFixedHeight(50) 
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                
+                # Determine Logo URL
+                logo_url = ch.logo
+                if not logo_url:
+                    if ch.tvg_id and ch.tvg_id.lower() in self.logo_map:
+                        logo_url = self.logo_map[ch.tvg_id.lower()]
+                    elif ch.name.lower() in self.logo_map:
+                        logo_url = self.logo_map[ch.name.lower()]
+                
+                if logo_url:
+                    btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_FileIcon))
+                    self.load_icon_async(logo_url, btn)
+                else:
+                    btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_FileIcon))
+                
+                btn.setIconSize(QSize(32, 32))
+                btn.clicked.connect(lambda checked, c=ch: self.play_channel(c))
+                self.card_layout.addWidget(btn)
             
-            # Determine Logo URL
-            logo_url = ch.logo
-            if not logo_url:
-                if ch.tvg_id and ch.tvg_id.lower() in self.logo_map:
-                    logo_url = self.logo_map[ch.tvg_id.lower()]
-                elif ch.name.lower() in self.logo_map:
-                    logo_url = self.logo_map[ch.name.lower()]
-            
-            if logo_url:
-                # Set default icon while loading
-                btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_FileIcon))
-                self.load_icon_async(logo_url, btn)
-            else:
-                btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_FileIcon))
-            
-            # Resize icon for better visibility
-            btn.setIconSize(QSize(32, 32))
-
-            # Store channel in button property or closure
-            btn.clicked.connect(lambda checked, c=ch: self.play_channel(c))
-            
-            self.card_layout.addWidget(btn)
+            # Schedule next batch
+            if end_idx < len(channels) and end_idx < limit:
+                QTimer.singleShot(10, lambda idx=end_idx: add_batch(idx))
+        
+        # Start processing batches
+        if channels:
+            add_batch(0)
 
     def play_channel(self, channel):
-        if channel:
+        if channel and not self.is_loading_media:
+            self.is_loading_media = True
             print(f"Playing: {channel.name} -> {channel.url}")
             
             # Resolve stream URL
@@ -531,31 +573,31 @@ class MainWindow(QMainWindow):
         self.play_video(stream_url)
 
     def on_resolve_error(self, error):
+        self.is_loading_media = False
         self.play_btn.setDisabled(False)
         self.search_input.setPlaceholderText("Error resolving URL")
         print(f"Resolve Error: {error}")
 
     def play_video(self, url):
-        # Force stop and wait a moment (synchronous stop usually enough for VLC binding)
-        self.video_player.stop() 
-        QApplication.processEvents() # Process any pending stop events
+        # Stop current playback
+        self.video_player.stop()
+        self.timer.stop()
+        QApplication.processEvents()
         
+        # Set new media and play
         self.video_player.set_media(url)
+        
+        # Small delay to let VLC process the media
+        QTimer.singleShot(100, lambda: self._start_playback())
+    
+    def _start_playback(self):
         self.video_player.play()
+        self.timer.start()
         self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPause))
+        self.is_loading_media = False
 
     def change_volume(self, value):
         self.video_player.set_volume(value)
-
-    def toggle_play(self):
-        if self.video_player.is_playing():
-            self.video_player.pause()
-            self.timer.stop()
-            self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPlay))
-        else:
-            self.video_player.play()
-            self.play_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_MediaPause))
-            self.timer.start()
 
     def get_icon(self, standard_pixmap):
         icon = self.style().standardIcon(standard_pixmap)
