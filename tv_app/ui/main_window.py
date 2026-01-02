@@ -1,32 +1,23 @@
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
-    QSplitter, QFrame, QComboBox, QSlider, QStyle, QFileDialog, QScrollArea
+    QSplitter, QFrame, QComboBox, QSlider, QStyle, QFileDialog, QScrollArea, QLabel, QProgressBar
 )
-from PyQt6.QtCore import Qt, QSize, QTimer, QUrl, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QTimer, QUrl, QThread, pyqtSignal, QRect
 from PyQt6.QtGui import QIcon, QPainter, QColor, QPixmap
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 import json
 import requests
 import sys
 
+# API URLs (kept for backwards compatibility with old worker code)
+LOGOS_URL = "https://iptv-org.github.io/api/logos.json"
+COUNTRIES_URL = "https://iptv-org.github.io/api/countries.json"
+STREAMS_URL = "https://iptv-org.github.io/api/streams.json"
+
 from playlist import M3UParser, Channel
 from player import VideoPlayer
 from . import styles
-from yt_handler import YouTubeHandler
-
-class PlaylistWorker(QThread):
-    finished = pyqtSignal(list)
-    error = pyqtSignal(str)
-
-    def __init__(self, url):
-        super().__init__()
-        self.url = url
-
-    def run(self):
-        try:
-            channels = YouTubeHandler.parse_playlist(self.url)
-            self.finished.emit(channels)
-        except Exception as e:
-            self.error.emit(str(e))
+from database import Database
+from db_worker import DatabaseUpdateWorker
 
 class M3UPlaylistWorker(QThread):
     finished = pyqtSignal(list)
@@ -43,23 +34,95 @@ class M3UPlaylistWorker(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
-class StreamResolverWorker(QThread):
-    finished = pyqtSignal(str)
+
+class StreamsWorker(QThread):
+    finished = pyqtSignal(list)
     error = pyqtSignal(str)
 
-    def __init__(self, url):
+    def __init__(self, urls):
         super().__init__()
-        self.url = url
+        self.urls = urls
 
     def run(self):
         try:
-            stream_url = YouTubeHandler.get_stream_url(self.url)
-            if stream_url:
-                self.finished.emit(stream_url)
-            else:
-                self.error.emit("Could not resolve stream URL")
+            channels = []
+            response = requests.get(self.urls["streams"], timeout=25)
+            response.raise_for_status()
+            data = response.json()
+
+            limit = 1200  # cap to keep UI responsive
+            for idx, item in enumerate(data):
+                if idx >= limit:
+                    break
+
+                name = item.get("title") or item.get("channel") or "Unknown"
+                url = item.get("url")
+                if not url:
+                    continue
+
+                tvg_id = item.get("channel")
+                group = item.get("feed")
+                logo = item.get("logo")
+
+                channels.append(Channel(
+                    name=name,
+                    url=url,
+                    logo=logo,
+                    group=group,
+                    tvg_id=tvg_id
+                ))
+
+            self.finished.emit(channels)
         except Exception as e:
             self.error.emit(str(e))
+
+
+
+
+class LoadingOverlay(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False) # Block input
+        self.setStyleSheet("background-color: rgba(18, 18, 18, 240);")
+        
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setSpacing(20)
+        
+        # Spinner/Progress Bar
+        self.spinner = QProgressBar(self)
+        self.spinner.setRange(0, 0) # Infinite/Marquee mode
+        self.spinner.setFixedWidth(200)
+        self.spinner.setFixedHeight(4)
+        self.spinner.setStyleSheet("""
+            QProgressBar {
+                border: none;
+                background-color: #333;
+                border-radius: 2px;
+            }
+            QProgressBar::chunk {
+                background-color: #0078d4;
+                border-radius: 2px;
+            }
+        """)
+        self.spinner.setTextVisible(False)
+        layout.addWidget(self.spinner)
+        
+        # Loading Text
+        self.label = QLabel("Loading...", self)
+        self.label.setStyleSheet("color: white; font-size: 24px; font-weight: bold; background: transparent;")
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.label)
+        
+        # Info Text
+        self.info_label = QLabel("Initializing...", self)
+        self.info_label.setStyleSheet("color: #aaa; font-size: 14px; background: transparent;")
+        self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.info_label)
+        
+    def set_message(self, msg):
+        self.info_label.setText(msg)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -68,7 +131,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         
         self.channels = []
-        self.current_playlist_url = "https://iptv-org.github.io/iptv/index.m3u"
+        self.channels = []
         self.is_loading_media = False
         
         # Playback Timer
@@ -76,14 +139,19 @@ class MainWindow(QMainWindow):
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.update_video_position)
         
+        # Search Debounce Timer
+        self.search_timer = QTimer(self)
+        self.search_timer.setInterval(100) # 300ms delay
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self.filter_channels)
+        
         # Initialize UI
         self.setup_ui()
         self.apply_styles()
         
-        # Data
-        self.logo_map = {}
-        self.country_map = {}
-        self.load_reference_data()
+        # Database initialization
+        self.db = Database()
+        self.db.init_db()
         
         # Network Manager for Logos
         self.nam = QNetworkAccessManager()
@@ -92,70 +160,125 @@ class MainWindow(QMainWindow):
 
         # Worker for async loading
         self.m3u_worker = None
+        self.update_worker = None
         
-        # Load Default playlist asynchronously
-        QTimer.singleShot(100, self.load_channels)
+        # Loading Overlay
+        self.loading_overlay = LoadingOverlay(self)
+        self.loading_overlay.resize(self.size())
+        self.loading_overlay.hide()
 
-    def load_reference_data(self):
-        # Load Countries
-        try:
-            with open('tv_app/data/countries.json', 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                for item in data:
-                    self.country_map[item['code'].upper()] = item
-        except Exception as e:
-            print(f"Error loading countries: {e}")
+        # Disable all buttons initially while database updates
+        self.disable_all_buttons()
+        
+        # Kick off background database update shortly after UI shows
+        QTimer.singleShot(50, self.start_database_update)
 
-        # Load Logos
-        try:
-            with open('tv_app/data/logos.json', 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                for item in data:
-                    # Map by channel name (normalized if possible)
-                    # The JSON has 'channel' key which usually matches tvg-id or name
-                    if 'channel' in item and 'url' in item:
-                        self.logo_map[item['channel'].lower()] = item['url']
-        except Exception as e:
-            print(f"Error loading logos: {e}")
+    def resizeEvent(self, event):
+        if hasattr(self, 'loading_overlay'):
+             self.loading_overlay.resize(self.size())
+        super().resizeEvent(event)
 
-    def load_from_url_input(self):
-        url_text = self.url_input.text().strip()
-        if not url_text:
+    def disable_all_buttons(self):
+        """Disable all interactive buttons during database update"""
+    def disable_all_buttons(self):
+        """Disable all interactive buttons during database update"""
+        self.play_btn.setDisabled(True)
+        self.category_combo.setDisabled(True)
+        self.country_combo.setDisabled(True)
+        self.search_input.setDisabled(True)
+        self.search_input.setDisabled(True)
+
+    def enable_all_buttons(self):
+        """Enable all interactive buttons after database update"""
+    def enable_all_buttons(self):
+        """Enable all interactive buttons after database update"""
+        self.play_btn.setDisabled(False)
+        self.category_combo.setDisabled(False)
+        self.country_combo.setDisabled(False)
+        self.search_input.setDisabled(False)
+        self.search_input.setDisabled(False)
+
+    def start_database_update(self):
+        """Start the database update worker"""
+        if self.update_worker and self.update_worker.isRunning():
             return
+        
+        self.update_worker = DatabaseUpdateWorker(self.db)
+        self.update_worker.progress.connect(self.on_database_progress)
+        self.update_worker.finished.connect(self.on_database_update_finished)
+        self.update_worker.error.connect(self.on_database_update_error)
+        self.update_worker = DatabaseUpdateWorker(self.db)
+        self.update_worker.progress.connect(self.on_database_progress)
+        self.update_worker.finished.connect(self.on_database_update_finished)
+        self.update_worker.error.connect(self.on_database_update_error)
+        
+        self.loading_overlay.show()
+        self.loading_overlay.raise_()
+        self.update_worker.start()
 
-        # Check for YouTube
-        if YouTubeHandler.is_youtube_url(url_text):
-            # Check if playlist
-            if "list=" in url_text:
-                self.search_input.setText("Loading YouTube Playlist...")
-                self.status_loading(True)
-                
-                self.playlist_worker = PlaylistWorker(url_text)
-                self.playlist_worker.finished.connect(self.on_playlist_loaded)
-                self.playlist_worker.error.connect(self.on_playlist_error)
-                self.playlist_worker.start()
-            else:
-                self.channels = [Channel(name="YouTube Video", url=url_text, group="YouTube")]
-                self.refresh_ui_with_channels()
-                self.play_channel(self.channels[0])
-            return
+    def on_database_progress(self, message):
+        self.loading_overlay.set_message(message)
 
-        if url_text.endswith(".m3u") or url_text.endswith(".m3u8"):
-            # Load from URL
-            parser = M3UParser()
-            try:
-                # We need to fetch it first.
-                response = requests.get(url_text, timeout=30)
-                if response.status_code == 200:
-                    self.channels = parser.parse(response.text)
-                    self.refresh_ui_with_channels()
-            except Exception as e:
-                print(f"Error loading URL: {e}")
-        else:
-             pass
+    def on_database_update_finished(self):
+        self.loading_overlay.hide()
+        self.search_input.setPlaceholderText("Search channels...")
+        self.enable_all_buttons()
+        self.load_channels_from_db()
+        self.populate_dropdowns_from_db()
+        
+        # Open Sidebar automatically
+        self.scroll_area.show()
+        self.toggle_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_ArrowRight))
+
+    def on_database_update_error(self, error_msg):
+        self.loading_overlay.hide()
+        self.search_input.setPlaceholderText(f"Error: {error_msg}")
+        self.enable_all_buttons()
+        print(f"Database update error: {error_msg}")
+        
+        # Show sidebar anyway
+        self.scroll_area.show()
+        self.toggle_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_ArrowRight))
+
+    def load_channels_from_db(self):
+        try:
+            self.channels = self.db.get_all_channels()
+            self.refresh_ui_with_channels()
+        except Exception as e:
+            print(f"Error loading channels from database: {e}")
+
+    def populate_dropdowns_from_db(self):
+        try:
+            categories = self.db.get_all_groups()
+            self.category_combo.clear()
+            self.category_combo.addItem("All Categories")
+            self.category_combo.addItems(sorted(categories) if categories else [])
+            
+            countries = self.db.get_all_countries()
+            self.country_combo.clear()
+            self.country_combo.addItem("All Countries", "All")
+            for name in countries:
+                self.country_combo.addItem(name, name)
+        except Exception as e:
+            print(f"Error populating dropdowns: {e}")
+
+    def load_streams(self):
+        self.search_input.setPlaceholderText("Loading streams...")
+        self.status_loading(True)
+
+        if getattr(self, 'streams_worker', None) and self.streams_worker.isRunning():
+            self.streams_worker.quit()
+            self.streams_worker.wait()
+
+        api_urls = {"streams": STREAMS_URL}
+        self.streams_worker = StreamsWorker(api_urls)
+        self.streams_worker.finished.connect(self.on_streams_loaded)
+        self.streams_worker.error.connect(self.on_streams_error)
+        self.streams_worker.start()
+
+
 
     def setup_ui(self):
-        # Main Widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
@@ -174,22 +297,8 @@ class MainWindow(QMainWindow):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search Channels")
         self.search_input.setFixedWidth(300)
-        self.search_input.textChanged.connect(self.filter_channels)
+        self.search_input.textChanged.connect(self.on_search_text_changed)
         top_layout.addWidget(self.search_input)
-
-        # URL Input
-        self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("https://...")
-        self.url_input.setFixedWidth(400)
-        self.url_input.setText(self.current_playlist_url)
-        top_layout.addWidget(self.url_input)
-
-        # Load Button
-        load_btn = QPushButton("Load URL")
-        load_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        load_btn.clicked.connect(self.load_from_url_input)
-        load_btn.setStyleSheet("background-color: #2a2a2a; padding: 6px 12px; font-weight: bold;")
-        top_layout.addWidget(load_btn)
 
         # Category Filter
         self.category_combo = QComboBox()
@@ -347,6 +456,10 @@ class MainWindow(QMainWindow):
         self.content_splitter.setSizes([900, 300])
 
         main_layout.addWidget(self.content_splitter)
+        
+        # Hide sidebar by default
+        self.scroll_area.hide()
+        self.toggle_btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_ArrowLeft))
 
 
 
@@ -354,8 +467,25 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(styles.DARK_THEME)
 
     def load_channels(self):
-        # Initial load - async
-        self.load_from_url(self.current_playlist_url)
+        # Start streams only once, after reference data is (attempted) loaded
+        if self.streams_started:
+            return
+        self.streams_started = True
+        self.load_streams()
+
+    def load_streams(self):
+        self.search_input.setPlaceholderText("Loading streams...")
+        self.status_loading(True)
+
+        if getattr(self, 'streams_worker', None) and self.streams_worker.isRunning():
+            self.streams_worker.quit()
+            self.streams_worker.wait()
+
+        api_urls = {"streams": STREAMS_URL}
+        self.streams_worker = StreamsWorker(api_urls)
+        self.streams_worker.finished.connect(self.on_streams_loaded)
+        self.streams_worker.error.connect(self.on_streams_error)
+        self.streams_worker.start()
 
     def load_from_url(self, url):
         self.search_input.setPlaceholderText("Loading...")
@@ -376,22 +506,41 @@ class MainWindow(QMainWindow):
         self.channels = channels
         self.refresh_ui_with_channels()
         self.search_input.setPlaceholderText("Search channels...")
+        if hasattr(self, 'load_btn'):
+            self.load_btn.setDisabled(False)
         
     def on_m3u_error(self, error_msg):
         self.status_loading(False)
         self.search_input.setPlaceholderText(f"Error: {error_msg}")
         print(f"Error loading M3U: {error_msg}")
-    
+        if hasattr(self, 'load_btn'):
+            self.load_btn.setDisabled(False)
+
+    def on_streams_loaded(self, channels):
+        self.status_loading(False)
+        self.channels = channels
+        self.refresh_ui_with_channels()
+        self.search_input.setPlaceholderText("Search channels...")
+
+    def on_streams_error(self, error_msg):
+        self.status_loading(False)
+        self.search_input.setPlaceholderText(f"Error: {error_msg}")
+        print(f"Error loading streams: {error_msg}")
+
     def on_playlist_loaded(self, channels):
         self.status_loading(False)
         self.channels = channels
         self.refresh_ui_with_channels()
         self.search_input.clear()
+        if hasattr(self, 'load_btn'):
+            self.load_btn.setDisabled(False)
         
     def on_playlist_error(self, error_msg):
         self.status_loading(False)
         print(f"Playlist Error: {error_msg}")
         self.search_input.setPlaceholderText("Error loading playlist")
+        if hasattr(self, 'load_btn'):
+            self.load_btn.setDisabled(False)
 
     def browse_folder(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Folder", "")
@@ -408,55 +557,35 @@ class MainWindow(QMainWindow):
         pass
 
     def refresh_ui_with_channels(self):
-        # Extract Categories
+        """Refresh UI with current channels - populates categories from channels"""
+        # Extract Categories from channels
         categories = set(ch.group for ch in self.channels if ch.group)
         self.category_combo.clear()
         self.category_combo.addItem("All Categories")
         self.category_combo.addItems(sorted(list(categories)))
-        
-        # Extract Countries
-        countries = set()
-        for ch in self.channels:
-            if ch.country_code:
-                countries.add(ch.country_code)
-        
-        # Sort countries by name if available
-        country_items = []
-        for code in countries:
-            display_name = code
-            if code.upper() in self.country_map:
-                c_data = self.country_map[code.upper()]
-                display_name = f"{c_data['name']}"
-            country_items.append((display_name, code))
-            
-        country_items.sort(key=lambda x: x[0])
-        
-        self.country_combo.clear()
-        self.country_combo.addItem("All Countries", "All")
-        for disp, code in country_items:
-            self.country_combo.addItem(disp, code)
 
         self.update_channel_list(self.channels)
         self.search_input.setPlaceholderText("Search")
 
+    def on_search_text_changed(self):
+        """Restart debounce timer on text change"""
+        self.search_timer.start()
+
     def filter_channels(self):
-        search_text = self.search_input.text().lower()
+        search_text = self.search_input.text().strip()
         category = self.category_combo.currentText()
-        country_code = self.country_combo.currentData()
+        country = self.country_combo.currentData()
         
-        filtered = []
-        for ch in self.channels:
-            matches_search = search_text in ch.name.lower()
-            matches_category = category == "All Categories" or ch.group == category
-            
-            matches_country = True
-            if country_code and country_code != "All":
-                matches_country = ch.country_code == country_code
-            
-            if matches_search and matches_category and matches_country:
-                filtered.append(ch)
+        # Query database with filters
+        group_filter = None if category == "All Categories" else category
+        country_filter = None if not country or country == "All" else country
         
-        self.update_channel_list(filtered)
+        try:
+            # Search database (search_channels handles partial text matching)
+            self.channels = self.db.search_channels(search_text, group_filter, country_filter)
+            self.update_channel_list(self.channels)
+        except Exception as e:
+            print(f"Error filtering channels: {e}")
 
     def load_icon_async(self, url, button):
         if not url:
@@ -521,13 +650,8 @@ class MainWindow(QMainWindow):
                 btn.setFixedHeight(50) 
                 btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 
-                # Determine Logo URL
+                # Determine Logo URL from database
                 logo_url = ch.logo
-                if not logo_url:
-                    if ch.tvg_id and ch.tvg_id.lower() in self.logo_map:
-                        logo_url = self.logo_map[ch.tvg_id.lower()]
-                    elif ch.name.lower() in self.logo_map:
-                        logo_url = self.logo_map[ch.name.lower()]
                 
                 if logo_url:
                     btn.setIcon(self.get_icon(QStyle.StandardPixmap.SP_FileIcon))
@@ -552,31 +676,9 @@ class MainWindow(QMainWindow):
             self.is_loading_media = True
             print(f"Playing: {channel.name} -> {channel.url}")
             
-            # Resolve stream URL
+            # Play stream directly
             stream_url = channel.url
-            if YouTubeHandler.is_youtube_url(stream_url):
-                self.play_btn.setDisabled(True)
-                self.search_input.setPlaceholderText("Resolving YouTube URL...")
-                
-                self.current_resolving_worker = StreamResolverWorker(stream_url)
-                self.current_resolving_worker.finished.connect(lambda url: self.on_stream_resolved(url))
-                self.current_resolving_worker.error.connect(self.on_resolve_error)
-                self.current_resolving_worker.start()
-                return
-
             self.play_video(stream_url)
-
-    def on_stream_resolved(self, stream_url):
-        self.play_btn.setDisabled(False)
-        self.search_input.setPlaceholderText("Search")
-        print(f"Resolved YouTube Stream: {stream_url}")
-        self.play_video(stream_url)
-
-    def on_resolve_error(self, error):
-        self.is_loading_media = False
-        self.play_btn.setDisabled(False)
-        self.search_input.setPlaceholderText("Error resolving URL")
-        print(f"Resolve Error: {error}")
 
     def play_video(self, url):
         # Stop current playback

@@ -10,7 +10,6 @@ class Channel:
     group: Optional[str] = None
     country: Optional[str] = None
     tvg_id: Optional[str] = None
-    country_code: Optional[str] = None
 
 class M3UParser:
     @staticmethod
@@ -63,8 +62,7 @@ class M3UParser:
                         url=line,
                         logo=current_channel.get('logo'),
                         group=current_channel.get('group', 'Uncategorized'),
-                        tvg_id=current_channel.get('tvg_id'),
-                        country_code=current_channel.get('country_code')
+                        tvg_id=current_channel.get('tvg_id')
                     ))
                     current_channel = {}
                     

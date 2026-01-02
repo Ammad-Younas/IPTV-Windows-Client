@@ -1,4 +1,8 @@
 import sys
+import os
+
+os.environ["QT_LOGGING_RULES"] = "qt.gui.imageio*=false"
+
 from PyQt6.QtWidgets import QApplication
 from ui.main_window import MainWindow
 
